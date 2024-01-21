@@ -1,11 +1,16 @@
 package org.example.convert
 
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import org.example.entity.PersistentEntity
 import org.example.entity.annotation.ManyToOne
 import org.example.entity.annotation.OneToMany
 import org.example.entity.annotation.OneToOne
+import org.example.extention.checkIsEntity
+import org.example.extention.checkIsList
+import org.example.extention.getEntity
+import org.example.extention.getListEntity
 import kotlin.reflect.KClass
 import kotlin.reflect.KProperty1
 import kotlin.reflect.full.declaredMemberProperties
@@ -35,15 +40,15 @@ class FilePersistentEntityConverter {
             }
             jsonElementList.putIfAbsent(src::class, mutableListOf(json))
         } else {
-            annotations.forEach {annotation ->
+            annotations.forEach { annotation ->
                 addFiledRelationship(annotation.value, json, src, annotation.key)
                 jsonElementList.putIfAbsent(src::class, mutableListOf(json))
-                if (annotations == OneToMany::class) {
-                    for (fieldListElem in annotation.key.getter.call(src) as List<*>) {
-                        serialize(fieldListElem as PersistentEntity)
+                if (annotation.value.annotationClass == OneToMany::class) {
+                    for (fieldListElem in annotation.key.getListEntity(src)) {
+                        serialize(fieldListElem)
                     }
                 } else {
-                    serialize(annotation.key.getter.call(src) as PersistentEntity)
+                    serialize(annotation.key.getEntity(src))
                 }
             }
         }
@@ -58,7 +63,13 @@ class FilePersistentEntityConverter {
         for (field in src::class.declaredMemberProperties) {
             for (annotation in field.javaField?.declaredAnnotations.orEmpty()) {
                 when (annotation.annotationClass) {
-                    OneToOne::class, OneToMany::class, ManyToOne::class -> {
+                    OneToOne::class, ManyToOne::class -> {
+                        field.checkIsEntity(src)
+                        annotationMap.putIfAbsent(field, annotation)
+                    }
+
+                    OneToMany::class -> {
+                        field.checkIsList(src)
                         annotationMap.putIfAbsent(field, annotation)
                     }
                 }
@@ -74,19 +85,21 @@ class FilePersistentEntityConverter {
         targetField: KProperty1<out PersistentEntity, *>
     ) {
         when (a.annotationClass) {
-            OneToOne::class ->
+            OneToOne::class, ManyToOne::class ->
                 json.asJsonObject.addProperty(
                     targetField.name,
-                    (targetField.getter.call(src) as PersistentEntity).id.toString()
+                    targetField.getEntity(src).id.toString()
                 )
 
             OneToMany::class -> {
-
+                val entityList = targetField.getListEntity(src)
+                val jsonArray = JsonArray()
+                entityList.forEach { element ->
+                    jsonArray.add(element.id.toString())
+                }
+                json.asJsonObject.add(targetField.name, jsonArray)
             }
 
-            ManyToOne::class -> {
-
-            }
         }
     }
 }
