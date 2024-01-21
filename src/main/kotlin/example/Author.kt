@@ -2,7 +2,7 @@ package org.example.example
 
 import org.example.entity.PersistentEntity
 
-class Author(
+data class Author(
     var name : String
     ) : PersistentEntity() {
 

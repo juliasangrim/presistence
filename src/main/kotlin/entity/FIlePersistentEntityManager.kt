@@ -23,12 +23,16 @@ class FilePersistentEntityManager(
 ) : PersistentEntityManager {
 
     override fun <T : PersistentEntity> save(entity: T): UUID {
-        val json = converter.serialize(entity)
-        val jsonWriter = gson.newJsonWriter(FileWriter("./${entity::class.simpleName}", true))
+        //TODO если с таким id уже есть
+        val jsonInfoMap = converter.serializeEntity(entity)
+        for (jsonInfo in jsonInfoMap) {
+            val jsonWriter = gson.newJsonWriter(FileWriter("./${jsonInfo.key.simpleName}", true))
+            for (json in jsonInfo.value) {
+                gson.toJson(json, jsonWriter)
+            }
+            jsonWriter.close()
 
-        gson.toJson(json, jsonWriter)
-        jsonWriter.close()
-
+        }
         return entity.id
     }
 
