@@ -16,7 +16,7 @@ class FilePersistentEntityConverter {
 
         val json = gson.toJsonTree(src)
         for (field in src::class.declaredMemberProperties) {
-            for (annotation in field.javaField?.declaredAnnotations!!) {
+            for (annotation in field.javaField?.declaredAnnotations.orEmpty()) {
                 when (annotation.annotationClass) {
                     OneToOne::class ->
                         json.asJsonObject.addProperty(field.name, (field.getter.call(src) as PersistentEntity).id.toString())
