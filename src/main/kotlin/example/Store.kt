@@ -5,9 +5,9 @@ import org.example.entity.annotation.OneToOne
 
 data class Store(
     var name : String,
-    val cash: Long,
+    var cash: Long,
     @OneToOne
-    val city: City
+    var city: City
 ) : PersistentEntity() {
 
     override fun toString(): String {

@@ -7,7 +7,7 @@ import org.example.entity.annotation.OneToMany
 data class Book(
     var title : String,
     var pages : Int,
-    @OneToMany
+    @OneToMany(true)
     var author : List<Author>,
     @OneToOne
     var store : Store,

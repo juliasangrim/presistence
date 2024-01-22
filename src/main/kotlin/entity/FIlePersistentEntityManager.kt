@@ -150,22 +150,58 @@ class FilePersistentEntityManager(
         val srcFile = File("${path}/${clazz.simpleName}")
         val destFile = File("${path}/${clazz.simpleName}_copy")
         val reader = gson.newJsonReader(FileReader(srcFile))
-        val writer = gson.newJsonWriter(FileWriter(destFile))
+        var writer: JsonWriter? = null
+
+        val annotations = AnnotationUtils.parseFieldAnnotation(clazz)
+        if (annotations.isNotEmpty()) {
+            cascadeDelete(id, clazz, annotations)
+        }
 
         while (true) {
             val json = iterate(reader) ?: break
+
             if (json["id"] != null && json["id"].asString != id.toString()) {
+                if (writer == null) {
+                    writer = gson.newJsonWriter(FileWriter(destFile))
+                }
                 gson.toJson(json, writer)
             }
         }
 
         reader.close()
-        writer.close()
+        writer?.close()
         srcFile.delete()
         destFile.renameTo(srcFile)
     }
 
-    override fun <T : PersistentEntity> search(query: Query, clazz: KClass<T>): List<JsonObject> {
+    private fun <T : PersistentEntity> cascadeDelete(id: UUID, clazz: KClass<T>, annotations: Map<KProperty1<out PersistentEntity, *>, Annotation>) {
+        for (annotation in annotations) {
+            when (annotation.value.annotationClass) {
+                OneToMany::class -> {
+                    if ((annotation.value as OneToMany).cascadeDelete) {
+                        val reader = gson.newJsonReader(FileReader("${path}/${clazz.simpleName}"))
+                        while (true) {
+                            val json = iterate(reader) ?: break
+
+                            if (json["id"] != null && json["id"].asString == id.toString()) {
+                                for (refId in json[annotation.key.name].asJsonArray) {
+                                    val refClass =
+                                        annotation.key.getter.returnType.arguments[0].type?.jvmErasure?.java
+                                    if (refClass != null && PersistentEntity::class.java.isAssignableFrom(refClass)) {
+                                        delete(UUID.fromString(refId.asString), (refClass as Class<T>).kotlin)
+                                    }
+                                }
+                                break
+                            }
+                        }
+                        reader.close()
+                    }
+                }
+            }
+        }
+    }
+
+    override fun <T : PersistentEntity> search(query: Query, clazz: KClass<T>): List<T> {
         val reader = gson.newJsonReader(FileReader("${path}/${query.from}"))
 
         val entities = mutableListOf<T>()
