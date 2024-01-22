@@ -9,31 +9,52 @@ import org.example.convert.FilePersistentEntityConverter
 import org.example.convert.PersistentEntityExclusionStrategy
 import org.example.entity.PersistentEntity
 import org.example.entity.PersistentEntityManager
+import org.example.query.Query
 import java.io.File
 import java.io.FileReader
 import java.io.FileWriter
 import java.util.UUID
+import kotlin.io.path.Path
+import kotlin.io.path.createDirectory
+import kotlin.io.path.notExists
+import kotlin.reflect.KClass
 
 class FilePersistentEntityManager(
-    private val converter: FilePersistentEntityConverter = FilePersistentEntityConverter(),
+    private val path: String = "./data",
     private val gson: Gson = GsonBuilder()
         .addDeserializationExclusionStrategy(PersistentEntityExclusionStrategy())
         .setLenient()
         .create()
 ) : PersistentEntityManager {
 
+    init {
+        if (Path(path).notExists()) {
+            Path(path).createDirectory()
+        }
+    }
+
     override fun <T : PersistentEntity> save(entity: T): UUID {
-        //TODO если с таким id уже есть
+        val converter = FilePersistentEntityConverter()
+
         val jsonInfoMap = converter.serializeEntity(entity)
         for (jsonInfo in jsonInfoMap) {
-            val jsonWriter = gson.newJsonWriter(FileWriter("./${jsonInfo.key.simpleName}", true))
             for (json in jsonInfo.value) {
-                gson.toJson(json, jsonWriter)
+                if (!isExist(UUID.fromString(json.asJsonObject["id"].asString), jsonInfo.key)) {
+                    // TODO: open writer once
+                    val jsonWriter = gson.newJsonWriter(FileWriter("${path}/${jsonInfo.key.simpleName}", true))
+                    gson.toJson(json, jsonWriter)
+                    jsonWriter.close()
+                } else if (jsonInfo.key == entity::class) {
+                    error("Entity update not implemented")
+                }
             }
-            jsonWriter.close()
 
         }
         return entity.id
+    }
+
+    private fun <T : PersistentEntity> isExist(id: UUID, clazz: KClass<T>): Boolean {
+        return get(id, clazz) != null
     }
 
     private fun iterate(reader: JsonReader): JsonObject? {
@@ -70,9 +91,12 @@ class FilePersistentEntityManager(
         }
     }
 
-    override fun <T : PersistentEntity> get(id: UUID, clazz: Class<T>): T {
-        val reader = gson.newJsonReader(FileReader("./${clazz.simpleName}"))
-        var resultJson = JsonObject()
+    override fun <T : PersistentEntity> get(id: UUID, clazz: KClass<T>): T? {
+        if (Path("${path}/${clazz.simpleName}").notExists()) {
+            return null
+        }
+        val reader = gson.newJsonReader(FileReader("${path}/${clazz.simpleName}"))
+        var resultJson : JsonObject? = null
 
         while (true) {
             val json = iterate(reader) ?: break
@@ -83,12 +107,28 @@ class FilePersistentEntityManager(
         }
 
         reader.close()
-        return gson.fromJson(resultJson, clazz)
+        return FilePersistentEntityConverter().deserialize(resultJson, clazz)
     }
 
-    override fun <T : PersistentEntity> delete(id: UUID, clazz: Class<T>) {
-        val srcFile = File("./${clazz.simpleName}")
-        val destFile = File("./${clazz.simpleName}_copy")
+    override fun <T : PersistentEntity> getAll(clazz: KClass<T>) : List<T> {
+        if (Path("${path}/${clazz.simpleName}").notExists()) {
+            return emptyList()
+        }
+        val reader = gson.newJsonReader(FileReader("${path}/${clazz.simpleName}"))
+        val results = mutableListOf<T>()
+
+        while (true) {
+            val json = iterate(reader) ?: break
+            results.add(gson.fromJson(json, clazz.java))
+        }
+
+        reader.close()
+        return results
+    }
+
+    override fun <T : PersistentEntity> delete(id: UUID, clazz: KClass<T>) {
+        val srcFile = File("${path}/${clazz.simpleName}")
+        val destFile = File("${path}/${clazz.simpleName}_copy")
         val reader = gson.newJsonReader(FileReader(srcFile))
         val writer = gson.newJsonWriter(FileWriter(destFile))
 
@@ -103,5 +143,21 @@ class FilePersistentEntityManager(
         writer.close()
         srcFile.delete()
         destFile.renameTo(srcFile)
+    }
+
+    override fun <T : PersistentEntity> search(query: Query, clazz: KClass<T>): List<JsonObject> {
+        val reader = gson.newJsonReader(FileReader("${path}/${query.from}"))
+
+        val resultJsons = mutableListOf<JsonObject>()
+
+        while (true) {
+            val json = iterate(reader) ?: break
+            if (query.condition.check(json)) {
+                resultJsons.add(json)
+            }
+        }
+
+        reader.close()
+        return resultJsons
     }
 }
