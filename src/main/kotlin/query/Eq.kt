@@ -20,7 +20,6 @@ class Eq(
     }
 
     override fun check(json: JsonObject): Boolean {
-        // TODO: cringe
         return (json[field] != null && json[field].asString == value.toString())
     }
 }
