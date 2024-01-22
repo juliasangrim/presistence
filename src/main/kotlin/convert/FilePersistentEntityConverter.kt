@@ -4,32 +4,30 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
-import entity.FilePersistentEntityManager
 import org.example.entity.PersistentEntity
+import org.example.entity.PersistentEntityManager
 import org.example.entity.annotation.ManyToOne
 import org.example.entity.annotation.OneToMany
 import org.example.entity.annotation.OneToOne
-import org.example.extention.checkIsEntity
-import org.example.extention.checkIsList
 import org.example.extention.getEntity
 import org.example.extention.getListEntity
 import java.util.UUID
 import kotlin.reflect.KClass
 import kotlin.reflect.KMutableProperty1
 import kotlin.reflect.KProperty1
-import kotlin.reflect.full.declaredMemberProperties
 import kotlin.reflect.jvm.javaField
+import kotlin.reflect.jvm.jvmErasure
 
 
-class FilePersistentEntityConverter {
+class FilePersistentEntityConverter(
+    private val entityManager: PersistentEntityManager
+) {
 
     private val gson = GsonBuilder()
         .addSerializationExclusionStrategy(PersistentEntityExclusionStrategy())
         .addDeserializationExclusionStrategy(PersistentEntityExclusionStrategy())
         .setLenient()
         .create()
-
-    private val entityManager = FilePersistentEntityManager()
 
     private val jsonElementList = mutableMapOf<KClass<out PersistentEntity>, MutableList<JsonElement>>()
 
@@ -39,7 +37,7 @@ class FilePersistentEntityConverter {
     }
 
     private fun serialize(src: PersistentEntity) {
-        val annotations = parseFieldAnnotation(src::class)
+        val annotations = AnnotationUtils.parseFieldAnnotation(src::class)
         val json = gson.toJsonTree(src)
         if (annotations.isEmpty()) {
             jsonElementList.computeIfPresent(src::class) { _, value ->
@@ -68,8 +66,7 @@ class FilePersistentEntityConverter {
         }
 
         val entity = gson.fromJson(src, clazz.java)
-        // найти поле с аннотацией (запомнить класс)
-        val annotations = parseFieldAnnotation(clazz)
+        val annotations = AnnotationUtils.parseFieldAnnotation(clazz)
         return if (annotations.isEmpty()) {
             entity
         } else {
@@ -77,48 +74,29 @@ class FilePersistentEntityConverter {
                 when (annotation.value.annotationClass) {
                     OneToOne::class, ManyToOne::class -> {
                         val refId = src[annotation.key.name].asString
-                        val refClass = annotation.key.getEntityClass()
-                        val refEntity = entityManager.get(UUID.fromString(refId), cls)
+                        val refClass = annotation.key.javaField?.type
+                        if (refClass != null && PersistentEntity::class.java.isAssignableFrom(refClass)) {
+                            val refEntity = entityManager.get(UUID.fromString(refId), (refClass as Class<T>).kotlin)
+                            (annotation.key as KMutableProperty1<*, *>).setter.call(entity, refEntity)
+                        }
                     }
                     OneToMany::class -> {
-
+                        val refEntities = mutableListOf<T>()
+                        for (refId in src[annotation.key.name].asJsonArray) {
+                            val refClass = annotation.key.getter.returnType.arguments[0].type?.jvmErasure?.java
+                            if (refClass != null && PersistentEntity::class.java.isAssignableFrom(refClass)) {
+                                val refEntity = entityManager.get(UUID.fromString(refId.asString), (refClass as Class<T>).kotlin)
+                                if (refEntity != null) {
+                                    refEntities.add(refEntity)
+                                }
+                            }
+                        }
+                        (annotation.key as KMutableProperty1<*, *>).setter.call(entity, refEntities)
                     }
                 }
-                val refId = src[annotation.key.name].asString
-                val prop : KProperty1<out PersistentEntity, *> = annotation.key
-                val cls = (prop.javaField?.type as Class<T>).kotlin
-                val refEntity = entityManager.get(UUID.fromString(refId), cls)
-                (annotation.key as KMutableProperty1<*, *>).setter.call(entity, refEntity)
             }
             entity
         }
-
-        // вытащить из джсона значение (айди)
-        // вытащить джсон из файла, соответствующего внутреннему классу (гет)
-        // entityManager.get(id, clazz)
-        // вызвать десереализе для него
-
-//        return gson.fromJson(src, clazz.java)
-    }
-
-    private fun <T : PersistentEntity> parseFieldAnnotation(clazz: KClass<T>): Map<KProperty1<out PersistentEntity, *>, Annotation> {
-        val annotationMap = mutableMapOf<KProperty1<out PersistentEntity, *>, Annotation>()
-        for (field in clazz.declaredMemberProperties) {
-            for (annotation in field.javaField?.declaredAnnotations.orEmpty()) {
-                when (annotation.annotationClass) {
-                    OneToOne::class, ManyToOne::class -> {
-                        field.checkIsEntity()
-                        annotationMap.putIfAbsent(field, annotation)
-                    }
-
-                    OneToMany::class -> {
-                        field.checkIsList()
-                        annotationMap.putIfAbsent(field, annotation)
-                    }
-                }
-            }
-        }
-        return annotationMap
     }
 
     private fun addFiledRelationship(
